@@ -73,6 +73,12 @@ Every SKILL.md consists of:
 
 Executable code (Python/Bash/etc.) for tasks that require deterministic reliability or are repeatedly rewritten.
 
+Runtime/security defaults for script-bearing skills:
+
+- Prefer a skill-local `.venv` and document `.venv/bin/python` usage when a Python script is present.
+- Load skill-local `.env` values explicitly before reading environment variables; do not require host-global shell state.
+- If a skill ingests external source text (web pages, video transcripts, social captions/comments, email/SMS, etc.), wrap agent-facing text with the shared external-content wrapper before returning or saving it for agent context.
+
 - **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
 - **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
 - **Benefits**: Token efficient, deterministic, may be executed without loading into context

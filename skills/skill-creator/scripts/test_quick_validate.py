@@ -67,6 +67,59 @@ metadata: |
 
         self.assertTrue(valid, message)
 
+    def test_rejects_external_ingestion_without_wrapper(self):
+        skill_dir = self.temp_dir / "reddit-like-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            """---
+name: reddit-like-skill
+description: Fetch Reddit comments
+---
+# Skill
+Use .venv/bin/python.
+""",
+            encoding="utf-8",
+        )
+        (skill_dir / "fetch.py").write_text(
+            """import urllib.request
+urlopen = urllib.request.urlopen
+print('download transcript comments')
+""",
+            encoding="utf-8",
+        )
+
+        valid, message = quick_validate.validate_skill(skill_dir)
+
+        self.assertFalse(valid)
+        self.assertIn("External-content ingestion skills must wrap", message)
+
+    def test_accepts_external_ingestion_with_wrapper_and_env_loader(self):
+        skill_dir = self.temp_dir / "wrapped-social-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            """---
+name: wrapped-social-skill
+description: Fetch Instagram captions
+---
+# Skill
+Use .venv/bin/python and load .env.
+""",
+            encoding="utf-8",
+        )
+        (skill_dir / "fetch.py").write_text(
+            """import os, urllib.request
+from external_content import load_skill_env, wrap_external_content
+load_skill_env('.')
+print(wrap_external_content('caption transcript'))
+print(os.getenv('TOKEN'))
+""",
+            encoding="utf-8",
+        )
+
+        valid, message = quick_validate.validate_skill(skill_dir)
+
+        self.assertTrue(valid, message)
+
 
 if __name__ == "__main__":
     main()
