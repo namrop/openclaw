@@ -22582,6 +22582,58 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               endpoints: {
                 type: "object",
                 properties: {
+                  audioIntake: {
+                    type: "object",
+                    properties: {
+                      enabled: {
+                        type: "boolean",
+                        title: "Gateway Audio Intake Endpoint Enabled",
+                        description:
+                          "Enable the private `POST /v1/audio/intake` endpoint (default: false). Use only on trusted ingress because callers can upload audio and spend transcription resources.",
+                      },
+                      maxBodyBytes: {
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                        maximum: 9007199254740991,
+                        title: "Gateway Audio Intake Max Body Bytes",
+                        description:
+                          "Max multipart request body size in bytes for `/v1/audio/intake` (default: 25MB). Lower this for small Tasker captures; raise only when longer recordings are intentional.",
+                      },
+                      maxAudioBytes: {
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                        maximum: 9007199254740991,
+                        title: "Gateway Audio Intake Max Audio Bytes",
+                        description:
+                          "Max uploaded audio file size in bytes after multipart parsing (default: 20MB). This is separate from maxBodyBytes so form overhead and file payload can be constrained independently.",
+                      },
+                      allowedMimes: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                        },
+                        title: "Gateway Audio Intake Allowed MIME Types",
+                        description:
+                          "Allowed uploaded audio MIME types for `/v1/audio/intake` (case-insensitive list). Keep this narrow to the formats your trusted capture client actually sends.",
+                      },
+                      tempDir: {
+                        type: "string",
+                        title: "Gateway Audio Intake Temp Directory",
+                        description:
+                          "Optional temporary directory root for audio uploads before transcription. Omit to use OpenClaw's preferred secure temp directory; raw files are deleted by default after transcription.",
+                      },
+                      debugRetainAudio: {
+                        type: "boolean",
+                        title: "Gateway Audio Intake Debug Retain Audio",
+                        description:
+                          "Keep temporary raw audio files after transcription for short debugging windows (default: false). Leave off for normal use to minimize raw voice retention.",
+                      },
+                    },
+                    additionalProperties: false,
+                    title: "Gateway Audio Intake Endpoint",
+                    description:
+                      "Controls the private `POST /v1/audio/intake` endpoint for trusted audio uploads and local transcription. Keep disabled unless the gateway is protected by loopback, Tailscale, or trusted proxy auth.",
+                  },
                   chatCompletions: {
                     type: "object",
                     properties: {
@@ -25614,6 +25666,41 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       label: "Gateway APNs Relay Timeout (ms)",
       help: "Timeout in milliseconds for relay send requests from the gateway to the APNs relay (default: 10000). Increase for slower relays or networks, or lower to fail wake attempts faster.",
       tags: ["network", "performance"],
+    },
+    "gateway.http.endpoints.audioIntake": {
+      label: "Gateway Audio Intake Endpoint",
+      help: "Controls the private `POST /v1/audio/intake` endpoint for trusted audio uploads and local transcription. Keep disabled unless the gateway is protected by loopback, Tailscale, or trusted proxy auth.",
+      tags: ["network"],
+    },
+    "gateway.http.endpoints.audioIntake.enabled": {
+      label: "Gateway Audio Intake Endpoint Enabled",
+      help: "Enable the private `POST /v1/audio/intake` endpoint (default: false). Use only on trusted ingress because callers can upload audio and spend transcription resources.",
+      tags: ["network"],
+    },
+    "gateway.http.endpoints.audioIntake.maxBodyBytes": {
+      label: "Gateway Audio Intake Max Body Bytes",
+      help: "Max multipart request body size in bytes for `/v1/audio/intake` (default: 25MB). Lower this for small Tasker captures; raise only when longer recordings are intentional.",
+      tags: ["network", "performance"],
+    },
+    "gateway.http.endpoints.audioIntake.maxAudioBytes": {
+      label: "Gateway Audio Intake Max Audio Bytes",
+      help: "Max uploaded audio file size in bytes after multipart parsing (default: 20MB). This is separate from maxBodyBytes so form overhead and file payload can be constrained independently.",
+      tags: ["network", "performance"],
+    },
+    "gateway.http.endpoints.audioIntake.allowedMimes": {
+      label: "Gateway Audio Intake Allowed MIME Types",
+      help: "Allowed uploaded audio MIME types for `/v1/audio/intake` (case-insensitive list). Keep this narrow to the formats your trusted capture client actually sends.",
+      tags: ["access", "network"],
+    },
+    "gateway.http.endpoints.audioIntake.tempDir": {
+      label: "Gateway Audio Intake Temp Directory",
+      help: "Optional temporary directory root for audio uploads before transcription. Omit to use OpenClaw's preferred secure temp directory; raw files are deleted by default after transcription.",
+      tags: ["network", "storage"],
+    },
+    "gateway.http.endpoints.audioIntake.debugRetainAudio": {
+      label: "Gateway Audio Intake Debug Retain Audio",
+      help: "Keep temporary raw audio files after transcription for short debugging windows (default: false). Leave off for normal use to minimize raw voice retention.",
+      tags: ["network"],
     },
     "gateway.http.endpoints.chatCompletions.enabled": {
       label: "OpenAI Chat Completions Endpoint",

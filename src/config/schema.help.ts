@@ -452,6 +452,20 @@ export const FIELD_HELP: Record<string, string> = {
     "Base HTTPS URL for the external APNs relay service used by official/TestFlight iOS builds. Keep this aligned with the relay URL baked into the iOS build so registration and send traffic hit the same deployment.",
   "gateway.push.apns.relay.timeoutMs":
     "Timeout in milliseconds for relay send requests from the gateway to the APNs relay (default: 10000). Increase for slower relays or networks, or lower to fail wake attempts faster.",
+  "gateway.http.endpoints.audioIntake":
+    "Controls the private `POST /v1/audio/intake` endpoint for trusted audio uploads and local transcription. Keep disabled unless the gateway is protected by loopback, Tailscale, or trusted proxy auth.",
+  "gateway.http.endpoints.audioIntake.enabled":
+    "Enable the private `POST /v1/audio/intake` endpoint (default: false). Use only on trusted ingress because callers can upload audio and spend transcription resources.",
+  "gateway.http.endpoints.audioIntake.maxBodyBytes":
+    "Max multipart request body size in bytes for `/v1/audio/intake` (default: 25MB). Lower this for small Tasker captures; raise only when longer recordings are intentional.",
+  "gateway.http.endpoints.audioIntake.maxAudioBytes":
+    "Max uploaded audio file size in bytes after multipart parsing (default: 20MB). This is separate from maxBodyBytes so form overhead and file payload can be constrained independently.",
+  "gateway.http.endpoints.audioIntake.allowedMimes":
+    "Allowed uploaded audio MIME types for `/v1/audio/intake` (case-insensitive list). Keep this narrow to the formats your trusted capture client actually sends.",
+  "gateway.http.endpoints.audioIntake.tempDir":
+    "Optional temporary directory root for audio uploads before transcription. Omit to use OpenClaw's preferred secure temp directory; raw files are deleted by default after transcription.",
+  "gateway.http.endpoints.audioIntake.debugRetainAudio":
+    "Keep temporary raw audio files after transcription for short debugging windows (default: false). Leave off for normal use to minimize raw voice retention.",
   "gateway.http.endpoints.chatCompletions.enabled":
     "Enable the OpenAI-compatible `POST /v1/chat/completions` endpoint (default: false).",
   "gateway.http.endpoints.chatCompletions.maxBodyBytes":

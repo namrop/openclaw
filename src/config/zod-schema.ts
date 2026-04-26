@@ -837,6 +837,17 @@ export const OpenClawSchema = z
           .object({
             endpoints: z
               .object({
+                audioIntake: z
+                  .object({
+                    enabled: z.boolean().optional(),
+                    maxBodyBytes: z.number().int().positive().optional(),
+                    maxAudioBytes: z.number().int().positive().optional(),
+                    allowedMimes: z.array(z.string()).optional(),
+                    tempDir: z.string().optional(),
+                    debugRetainAudio: z.boolean().optional(),
+                  })
+                  .strict()
+                  .optional(),
                 chatCompletions: z
                   .object({
                     enabled: z.boolean().optional(),

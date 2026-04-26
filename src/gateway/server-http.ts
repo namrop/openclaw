@@ -58,6 +58,7 @@ type PluginHttpRequestHandler = (
 
 let identityAvatarModulePromise: Promise<typeof import("../agents/identity-avatar.js")> | undefined;
 let controlUiModulePromise: Promise<typeof import("./control-ui.js")> | undefined;
+let audioIntakeHttpModulePromise: Promise<typeof import("./audio-intake-http.js")> | undefined;
 let embeddingsHttpModulePromise: Promise<typeof import("./embeddings-http.js")> | undefined;
 let managedImageAttachmentsModulePromise:
   | Promise<typeof import("./managed-image-attachments.js")>
@@ -87,6 +88,11 @@ function getIdentityAvatarModule() {
 function getControlUiModule() {
   controlUiModulePromise ??= import("./control-ui.js");
   return controlUiModulePromise;
+}
+
+function getAudioIntakeHttpModule() {
+  audioIntakeHttpModulePromise ??= import("./audio-intake-http.js");
+  return audioIntakeHttpModulePromise;
 }
 
 function getEmbeddingsHttpModule() {
@@ -208,6 +214,10 @@ function isOpenAiChatCompletionsPath(pathname: string): boolean {
 
 function isOpenResponsesPath(pathname: string): boolean {
   return pathname === "/v1/responses";
+}
+
+function isAudioIntakePath(pathname: string): boolean {
+  return pathname === "/v1/audio/intake";
 }
 
 function isToolsInvokePath(pathname: string): boolean {
@@ -652,6 +662,21 @@ export function createGatewayHttpServer(opts: {
             (await getOpenResponsesHttpModule()).handleOpenResponsesHttpRequest(req, res, {
               auth: resolvedAuth,
               config: openResponsesConfig,
+              trustedProxies,
+              allowRealIpFallback,
+              rateLimiter,
+            }),
+        });
+      }
+      const audioIntakeConfig = configSnapshot.gateway?.http?.endpoints?.audioIntake;
+      if (audioIntakeConfig?.enabled === true && isAudioIntakePath(scopedRequestPath)) {
+        requestStages.push({
+          name: "audio-intake",
+          run: async () =>
+            (await getAudioIntakeHttpModule()).handleAudioIntakeHttpRequest(req, res, {
+              auth: resolvedAuth,
+              cfg: configSnapshot,
+              config: audioIntakeConfig,
               trustedProxies,
               allowRealIpFallback,
               rateLimiter,

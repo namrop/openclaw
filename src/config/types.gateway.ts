@@ -331,7 +331,35 @@ export type GatewayHttpResponsesImagesConfig = {
   timeoutMs?: number;
 };
 
+export type GatewayHttpAudioIntakeConfig = {
+  /**
+   * If false, the Gateway will not serve `POST /v1/audio/intake`.
+   * Default: false when absent.
+   */
+  enabled?: boolean;
+  /**
+   * Max multipart request body size in bytes for `/v1/audio/intake`.
+   * Default: 25MB.
+   */
+  maxBodyBytes?: number;
+  /**
+   * Max uploaded audio file size in bytes after multipart parsing.
+   * Default: 20MB.
+   */
+  maxAudioBytes?: number;
+  /** Allowed uploaded audio MIME types (case-insensitive). */
+  allowedMimes?: string[];
+  /** Optional temporary directory root for uploaded audio before transcription. */
+  tempDir?: string;
+  /**
+   * Keep raw audio temp files after transcription for debugging.
+   * Default: false; raw audio is deleted after each request.
+   */
+  debugRetainAudio?: boolean;
+};
+
 export type GatewayHttpEndpointsConfig = {
+  audioIntake?: GatewayHttpAudioIntakeConfig;
   chatCompletions?: GatewayHttpChatCompletionsConfig;
   responses?: GatewayHttpResponsesConfig;
 };

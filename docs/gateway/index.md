@@ -74,6 +74,7 @@ After the first successful load, the running process serves the active in-memory
 - Single multiplexed port for:
   - WebSocket control/RPC
   - HTTP APIs, OpenAI compatible (`/v1/models`, `/v1/embeddings`, `/v1/chat/completions`, `/v1/responses`, `/tools/invoke`)
+  - Private media endpoints such as `/v1/audio/intake` when explicitly enabled
   - Control UI and hooks
 - Default bind mode: `loopback`.
 - Auth is required by default. Shared-secret setups use
@@ -90,6 +91,9 @@ OpenClaw’s highest-leverage compatibility surface is now:
 - `POST /v1/embeddings`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+
+Private non-compat endpoints can also be enabled explicitly, including `POST /v1/audio/intake`
+for trusted audio upload and transcription.
 
 Why this set matters:
 
