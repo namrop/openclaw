@@ -24,8 +24,10 @@ Use the `message` tool. No provider-specific `discord` tool exposed to the agent
 
 ## Targets
 
-- Send-like actions: `to: "channel:<id>"` or `to: "user:<id>"`.
-- Message-specific actions: `channelId: "<id>"` (or `to`) + `messageId: "<id>"`.
+- Send-like actions: use `target: "channel:<id>"` for channels/threads or `target: "user:<id>"` for DMs.
+- For the current Discord thread/channel, send to `target: "channel:<thread-or-channel-id>"`; only use `target: "user:<id>"` when a DM is explicitly requested.
+- Message-specific actions: use `channelId: "<id>"` (or `target: "channel:<id>"` where supported) + `messageId: "<id>"`.
+- Older notes/examples may mention `to`; prefer `target` because it matches the live message tool schema.
 
 ## Common Actions (Examples)
 
@@ -35,7 +37,7 @@ Send message:
 {
   "action": "send",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "message": "hello",
   "silent": true
 }
@@ -47,11 +49,14 @@ Send with media:
 {
   "action": "send",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "message": "see attachment",
   "media": "file:///tmp/example.png"
 }
 ```
+
+- For local files, use the message tool `media: "file:///absolute/path"` field. Do **not** rely on inline assistant `MEDIA:/absolute/path` lines for Discord delivery; absolute local `MEDIA:` lines can be stripped/blocked and surface as `⚠️ Media failed`.
+- If the attachment should land in the current thread, use `target: "channel:<thread-id>"`, not `target: "user:<id>"`.
 
 - Optional `silent: true` to suppress Discord notifications.
 
@@ -61,7 +66,7 @@ Send with components v2 (recommended for rich UI):
 {
   "action": "send",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "message": "Status update",
   "components": "[Carbon v2 components]"
 }
@@ -76,7 +81,7 @@ Legacy embeds (not recommended):
 {
   "action": "send",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "message": "Status update",
   "embeds": [{ "title": "Legacy", "description": "Embeds are legacy." }]
 }
@@ -102,7 +107,7 @@ Read:
 {
   "action": "read",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "limit": 20
 }
 ```
@@ -134,7 +139,7 @@ Poll:
 {
   "action": "poll",
   "channel": "discord",
-  "to": "channel:123",
+  "target": "channel:123",
   "pollQuestion": "Lunch?",
   "pollOption": ["Pizza", "Sushi", "Salad"],
   "pollMulti": false,
