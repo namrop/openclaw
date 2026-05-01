@@ -156,6 +156,36 @@ export async function autoBindSpawnedDiscordSubagent(params: {
     }
   }
 
+  const targetSessionKey = normalizeOptionalString(params.childSessionKey) ?? "";
+  if (!targetSessionKey) {
+    return null;
+  }
+  const existingForSession = manager
+    .listBySessionKey(targetSessionKey)
+    .find((binding) => binding.targetKind === "subagent" && binding.channelId === channelId);
+  if (existingForSession) {
+    return existingForSession;
+  }
+
+  const label = normalizeOptionalString(params.label) ?? "";
+  const agentId = normalizeOptionalString(params.agentId) ?? "";
+  if (label) {
+    const duplicateLabelBinding = manager.listBindings().find((binding) => {
+      if (binding.targetKind !== "subagent" || binding.channelId !== channelId) {
+        return false;
+      }
+      if ((normalizeOptionalString(binding.label) ?? "") !== label) {
+        return false;
+      }
+      return (normalizeOptionalString(binding.agentId) ?? "") === agentId;
+    });
+    if (duplicateLabelBinding && duplicateLabelBinding.targetSessionKey !== targetSessionKey) {
+      throw new Error(
+        `A Discord thread binding already exists for subagent label "${label}" in channel ${channelId}; reuse session ${duplicateLabelBinding.targetSessionKey} instead of spawning a duplicate thread.`,
+      );
+    }
+  }
+
   return await manager.bindTarget({
     threadId: undefined,
     channelId,
@@ -165,7 +195,7 @@ export async function autoBindSpawnedDiscordSubagent(params: {
       label: params.label,
     }),
     targetKind: "subagent",
-    targetSessionKey: params.childSessionKey,
+    targetSessionKey,
     agentId: params.agentId,
     label: params.label,
     boundBy: params.boundBy ?? "system",

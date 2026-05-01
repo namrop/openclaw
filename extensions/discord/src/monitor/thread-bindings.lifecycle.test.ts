@@ -809,6 +809,89 @@ describe("thread binding lifecycle", () => {
     );
   });
 
+  it("reuses an existing spawned subagent binding for the same child session", async () => {
+    const manager = createTestThreadBindingManager({
+      accountId: "default",
+      persist: false,
+      enableSweeper: false,
+      idleTimeoutMs: 24 * 60 * 60 * 1000,
+      maxAgeMs: 0,
+    });
+
+    await manager.bindTarget({
+      threadId: "thread-parent",
+      channelId: "parent-1",
+      targetKind: "subagent",
+      targetSessionKey: "agent:main:subagent:parent",
+      agentId: "main",
+    });
+    await manager.bindTarget({
+      threadId: "thread-child-existing",
+      channelId: "parent-1",
+      targetKind: "subagent",
+      targetSessionKey: "agent:main:subagent:child-existing",
+      agentId: "main",
+      label: "worker",
+    });
+    hoisted.createThreadDiscord.mockClear();
+
+    const childBinding = await autoBindSpawnedDiscordSubagent({
+      cfg: EMPTY_DISCORD_TEST_CONFIG,
+      accountId: "default",
+      channel: "discord",
+      to: "channel:thread-parent",
+      threadId: "thread-parent",
+      childSessionKey: "agent:main:subagent:child-existing",
+      agentId: "main",
+      label: "worker",
+    });
+
+    expect(childBinding?.threadId).toBe("thread-child-existing");
+    expect(hoisted.createThreadDiscord).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate spawned subagent labels in the same parent channel", async () => {
+    const manager = createTestThreadBindingManager({
+      accountId: "default",
+      persist: false,
+      enableSweeper: false,
+      idleTimeoutMs: 24 * 60 * 60 * 1000,
+      maxAgeMs: 0,
+    });
+
+    await manager.bindTarget({
+      threadId: "thread-parent",
+      channelId: "parent-1",
+      targetKind: "subagent",
+      targetSessionKey: "agent:main:subagent:parent",
+      agentId: "main",
+    });
+    await manager.bindTarget({
+      threadId: "thread-child-existing",
+      channelId: "parent-1",
+      targetKind: "subagent",
+      targetSessionKey: "agent:main:subagent:child-existing",
+      agentId: "main",
+      label: "worker",
+    });
+    hoisted.createThreadDiscord.mockClear();
+
+    await expect(
+      autoBindSpawnedDiscordSubagent({
+        cfg: EMPTY_DISCORD_TEST_CONFIG,
+        accountId: "default",
+        channel: "discord",
+        to: "channel:thread-parent",
+        threadId: "thread-parent",
+        childSessionKey: "agent:main:subagent:child-duplicate",
+        agentId: "main",
+        label: "worker",
+      }),
+    ).rejects.toThrow(/already exists for subagent label "worker"/);
+
+    expect(hoisted.createThreadDiscord).not.toHaveBeenCalled();
+  });
+
   it("resolves parent channel when thread target is passed via to without threadId", async () => {
     createTestThreadBindingManager({
       accountId: "default",

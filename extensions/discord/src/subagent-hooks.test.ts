@@ -32,7 +32,10 @@ const hookMocks = vi.hoisted(() => ({
     }),
   ),
   autoBindSpawnedDiscordSubagent: vi.fn(
-    async (): Promise<{ threadId: string } | null> => ({ threadId: "thread-1" }),
+    async (): Promise<{ accountId: string; threadId: string } | null> => ({
+      accountId: "work",
+      threadId: "thread-1",
+    }),
   ),
   listThreadBindingsBySessionKey: vi.fn((_params?: unknown): ThreadBindingRecord[] => []),
   unbindThreadBindingsBySessionKey: vi.fn(() => []),
@@ -211,7 +214,16 @@ describe("discord subagent hook handlers", () => {
       label: "banana",
       boundBy: "system",
     });
-    expect(result).toMatchObject({ status: "ok", threadBindingReady: true });
+    expect(result).toEqual({
+      status: "ok",
+      threadBindingReady: true,
+      deliveryOrigin: {
+        channel: "discord",
+        accountId: "work",
+        to: "channel:thread-1",
+        threadId: "thread-1",
+      },
+    });
   });
 
   it("returns error when thread-bound subagent spawn is disabled", async () => {
