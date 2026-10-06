@@ -6,9 +6,14 @@ import {
   normalizeFastMode,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GatewayClient } from "../gateway/client.js";
 import type { GatewaySessionRow, SessionsListResult } from "../gateway/session-utils.js";
+import type { ExecApprovalsFile } from "../infra/exec-approvals-core.js";
+import { parseAgentSessionKey } from "../routing/session-key.js";
 import {
+  ACP_MODEL_CONFIG_ID,
+  ACP_PERMISSION_MODE_CONFIG_ID,
   ACP_ELEVATED_LEVEL_CONFIG_ID,
   ACP_FAST_MODE_CONFIG_ID,
   ACP_REASONING_LEVEL_CONFIG_ID,
@@ -38,9 +43,9 @@ export class AcpTranslatorSessionState {
     overrides?: Partial<GatewaySessionPresentationRow>,
   ): Promise<SessionSnapshot> {
     try {
-      const row = await this.getGatewaySessionRow(sessionKey);
+      const { row, models } = await this.getGatewayPresentation(sessionKey);
       return {
-        ...buildSessionPresentation({ row, overrides }),
+        ...buildSessionPresentation({ row, models, overrides }),
         metadata: buildSessionMetadata({ row, sessionKey }),
         usage: buildSessionUsageSnapshot(row),
       };
@@ -54,12 +59,12 @@ export class AcpTranslatorSessionState {
   }
 
   async getExistingSnapshot(sessionKey: string): Promise<SessionSnapshot> {
-    const row = await this.getGatewaySessionRow(sessionKey);
-    if (!row) {
+    const { row, models, exists } = await this.getGatewayPresentation(sessionKey);
+    if (!exists) {
       throw new Error(`Session ${sessionKey} not found`);
     }
     return {
-      ...buildSessionPresentation({ row }),
+      ...buildSessionPresentation({ row, models }),
       metadata: buildSessionMetadata({ row, sessionKey }),
       usage: buildSessionUsageSnapshot(row),
     };
@@ -154,6 +159,17 @@ export class AcpTranslatorSessionState {
       );
     }
     switch (configId) {
+      case ACP_MODEL_CONFIG_ID:
+        if (!/^[^/\s]+\/\S+$/.test(value)) {
+          throw new Error(`Unsupported model ref: ${value}`);
+        }
+        // Reread the authoritative row; a model patch can canonicalize aliases.
+        return { patch: { model: value }, overrides: {} };
+      case ACP_PERMISSION_MODE_CONFIG_ID:
+        if (!["read-only", "guarded", "workspace", "full"].includes(value)) {
+          throw new Error(`Unsupported permission mode: ${value}`);
+        }
+        return { patch: { permissionMode: value }, overrides: {} };
       case ACP_THOUGHT_LEVEL_CONFIG_ID:
         return {
           patch: { thinkingLevel: value },
@@ -206,47 +222,66 @@ export class AcpTranslatorSessionState {
     }
   }
 
-  private async getGatewaySessionRow(
-    sessionKey: string,
-  ): Promise<GatewaySessionPresentationRow | undefined> {
-    const result = await this.gateway.request<SessionsListResult>("sessions.list", {
-      limit: 200,
-      search: sessionKey,
-      includeDerivedTitles: true,
-    });
+  private async getGatewayPresentation(sessionKey: string): Promise<{
+    row: GatewaySessionPresentationRow;
+    exists: boolean;
+    models: Array<{ provider: string; id: string; name?: string }>;
+  }> {
+    const agentId = parseAgentSessionKey(sessionKey)?.agentId;
+    const scope = agentId ? { agentId } : {};
+    const [result, catalog] = await Promise.all([
+      this.gateway.request<SessionsListResult>("sessions.list", {
+        limit: 200,
+        search: sessionKey,
+        includeDerivedTitles: true,
+        ...scope,
+      }),
+      this.gateway
+        .request<{ models?: Array<{ provider: string; id: string; name?: string }> }>(
+          "models.list",
+          scope,
+        )
+        .catch((err) => {
+          this.log(`model catalog unavailable: ${String(err)}`);
+          return { models: [] };
+        }),
+    ]);
     const session = result.sessions.find((entry) => entry.key === sessionKey);
-    if (!session) {
-      return undefined;
-    }
-    return {
-      key: session.key,
-      kind: session.kind,
-      channel: session.channel,
-      parentSessionKey: session.parentSessionKey,
-      spawnedBy: session.spawnedBy,
-      spawnDepth: session.spawnDepth,
-      subagentRole: session.subagentRole,
-      subagentControlScope: session.subagentControlScope,
-      spawnedWorkspaceDir: session.spawnedWorkspaceDir,
-      spawnedCwd: session.spawnedCwd,
-      displayName: session.displayName,
-      label: session.label,
-      derivedTitle: session.derivedTitle,
-      updatedAt: session.updatedAt,
-      thinkingLevel: session.thinkingLevel,
-      thinkingLevels: session.thinkingLevels,
-      modelProvider: session.modelProvider,
-      model: session.model,
-      fastMode: session.fastMode,
-      effectiveFastMode: session.effectiveFastMode,
-      verboseLevel: session.verboseLevel,
-      traceLevel: session.traceLevel,
-      reasoningLevel: session.reasoningLevel,
-      responseUsage: session.responseUsage,
-      elevatedLevel: session.elevatedLevel,
-      totalTokens: session.totalTokens,
-      totalTokensFresh: session.totalTokensFresh,
-      contextTokens: session.contextTokens,
+    const row: GatewaySessionPresentationRow = {
+      key: sessionKey,
+      kind: "unknown",
+      updatedAt: null,
+      ...session,
+      modelProvider: session?.modelProvider ?? result.defaults?.modelProvider ?? undefined,
+      model: session?.model ?? result.defaults?.model ?? undefined,
     };
+    if (!row.permissionMode) {
+      try {
+        // Read Gateway policy, not the bridge host's config/approval floors.
+        const [snapshot, approvals, { resolveExecDefaults }, { SESSION_PERMISSION_BY_EXEC_MODE }] =
+          await Promise.all([
+            this.gateway.request<{ runtimeConfig?: OpenClawConfig; config?: OpenClawConfig }>(
+              "config.get",
+              {},
+            ),
+            this.gateway.request<{ file?: ExecApprovalsFile }>("exec.approvals.get", {}),
+            import("../agents/exec-defaults.js"),
+            import("../agents/session-permission-exec-mode.js"),
+          ]);
+        if (snapshot.runtimeConfig ?? snapshot.config) {
+          const defaults = resolveExecDefaults({
+            cfg: snapshot.runtimeConfig ?? snapshot.config,
+            execApprovals: approvals.file ?? { version: 1 },
+            sessionKey,
+            agentId,
+          });
+          row.permissionMode = SESSION_PERMISSION_BY_EXEC_MODE[defaults.mode];
+        }
+      } catch (err) {
+        // Never advertise fabricated access when the authoritative policy is unavailable.
+        this.log(`access default unavailable: ${String(err)}`);
+      }
+    }
+    return { row, exists: Boolean(session), models: catalog.models ?? [] };
   }
 }

@@ -13,6 +13,8 @@ import { BASE_THINKING_LEVELS } from "../auto-reply/thinking.shared.js";
 import type { GatewaySessionRow } from "../gateway/session-utils.js";
 
 /** ACP config option ids exposed to compatible ACP clients. */
+export const ACP_MODEL_CONFIG_ID = "model";
+export const ACP_PERMISSION_MODE_CONFIG_ID = "permission_mode";
 export const ACP_THOUGHT_LEVEL_CONFIG_ID = "thought_level";
 export const ACP_FAST_MODE_CONFIG_ID = "fast_mode";
 export const ACP_VERBOSE_LEVEL_CONFIG_ID = "verbose_level";
@@ -43,6 +45,7 @@ export type GatewaySessionPresentationRow = Pick<
   | "thinkingLevel"
   | "fastMode"
   | "effectiveFastMode"
+  | "permissionMode"
   | "modelProvider"
   | "model"
   | "thinkingLevels"
@@ -133,6 +136,7 @@ function buildSelectConfigOption(params: {
 export function buildSessionPresentation(params: {
   row?: GatewaySessionPresentationRow;
   overrides?: Partial<GatewaySessionPresentationRow>;
+  models?: ReadonlyArray<{ provider: string; id: string; name?: string }>;
 }): SessionPresentation {
   const row = {
     ...params.row,
@@ -212,6 +216,31 @@ export function buildSessionPresentation(params: {
     }),
   ];
 
+  const model = row.modelProvider && row.model ? `${row.modelProvider}/${row.model}` : undefined;
+  if (model) {
+    configOptions.push({
+      id: ACP_MODEL_CONFIG_ID,
+      type: "select",
+      category: "model",
+      name: "Model",
+      currentValue: model,
+      options: (params.models ?? []).map((entry) => ({
+        value: `${entry.provider}/${entry.id}`,
+        name: entry.name ?? entry.id,
+      })),
+    });
+  }
+  if (row.permissionMode) {
+    configOptions.push(
+      buildSelectConfigOption({
+        id: ACP_PERMISSION_MODE_CONFIG_ID,
+        name: "Access",
+        description: "Session access policy enforced by the Gateway.",
+        currentValue: row.permissionMode,
+        values: ["read-only", "guarded", "workspace", "full"],
+      }),
+    );
+  }
   return { configOptions, modes };
 }
 
