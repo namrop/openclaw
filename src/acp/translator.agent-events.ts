@@ -20,6 +20,7 @@ import {
 } from "./permission-relay.js";
 import type { AcpPendingApprovalRelay, AcpPendingPrompt } from "./translator.prompt-state.js";
 import type { AcpTranslatorSessionUpdates } from "./translator.session-updates.js";
+import type { AcpTranslatorSubagents } from "./translator.subagents.js";
 
 export class AcpTranslatorAgentEvents {
   constructor(
@@ -37,6 +38,7 @@ export class AcpTranslatorAgentEvents {
       runId?: string,
     ) => AcpPendingPrompt | undefined,
     private readonly log: (msg: string) => void,
+    private readonly subagents: AcpTranslatorSubagents,
   ) {}
 
   async handleAgentEvent(evt: EventFrame): Promise<void> {
@@ -80,6 +82,9 @@ export class AcpTranslatorAgentEvents {
         return;
       }
       const args = data.args as Record<string, unknown> | undefined;
+      if (name === "sessions_spawn") {
+        this.subagents.rememberSpawn(sessionKey, toolCallId, pending, args);
+      }
       const title = formatToolTitle(name, args);
       const kind = inferToolKind(name);
       const locations = extractToolCallLocations(args);
@@ -135,6 +140,10 @@ export class AcpTranslatorAgentEvents {
     if (phase === "result") {
       const isError = Boolean(data.isError);
       const toolState = pending.toolCalls?.get(toolCallId);
+      const subagent =
+        (toolState?.name ?? name) === "sessions_spawn"
+          ? this.subagents.acceptSpawn(sessionKey, toolCallId, data.result)
+          : undefined;
       pending.toolCalls?.delete(toolCallId);
       await this.sessionUpdates.emit({
         sessionId: pending.sessionId,
@@ -149,9 +158,14 @@ export class AcpTranslatorAgentEvents {
           rawOutput: data.result,
           content: extractToolCallContent(data.result),
           locations: extractToolCallLocations(toolState?.locations, data.result),
-          _meta: { openclaw: { toolName: toolState?.name ?? name } },
+          _meta: {
+            openclaw: { toolName: toolState?.name ?? name, ...(subagent ? { subagent } : {}) },
+          },
         },
       });
+      if (subagent) {
+        this.subagents.observe(subagent.id);
+      }
     }
   }
 

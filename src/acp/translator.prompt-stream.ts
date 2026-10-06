@@ -1,6 +1,5 @@
 /** ACP prompt submission, Gateway chat streaming, and prompt settlement. */
 import { randomUUID } from "node:crypto";
-import os from "node:os";
 import type {
   AgentSideConnection,
   CancelNotification,
@@ -21,6 +20,10 @@ import { createVoiceNoteTranscriptUpdate, transcribePromptAudio } from "./prompt
 import { parseSessionMeta } from "./session-mapper.js";
 import { AcpTranslatorAgentEvents } from "./translator.agent-events.js";
 import { AcpTranslatorDisconnects } from "./translator.disconnects.js";
+import {
+  buildSystemInputProvenance,
+  buildSystemProvenanceReceipt,
+} from "./translator.prompt-provenance.js";
 import type {
   AcpAgentWaitResult,
   AcpPendingApprovalRelay,
@@ -29,6 +32,7 @@ import type {
 import type { GatewayChatContentBlock } from "./translator.replay.js";
 import type { AcpTranslatorSessionState } from "./translator.session-state.js";
 import type { AcpTranslatorSessionUpdates } from "./translator.session-updates.js";
+import { AcpTranslatorSubagents } from "./translator.subagents.js";
 
 // Maximum allowed prompt size (2MB) to prevent DoS via memory exhaustion (CWE-400, GHSA-cxpw-2g23-2vgw)
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
@@ -69,37 +73,12 @@ function isGatewayCloseError(err: unknown): boolean {
   return message.startsWith("gateway closed (");
 }
 
-function buildSystemInputProvenance(originSessionId: string) {
-  return {
-    kind: "external_user" as const,
-    originSessionId,
-    sourceChannel: "acp",
-    sourceTool: "openclaw_acp",
-  };
-}
-
-function buildSystemProvenanceReceipt(params: {
-  cwd: string;
-  sessionId: string;
-  sessionKey: string;
-}) {
-  return [
-    "[Source Receipt]",
-    "bridge=openclaw-acp",
-    `originHost=${os.hostname()}`,
-    `originCwd=${shortenHomePath(params.cwd)}`,
-    `acpSessionId=${params.sessionId}`,
-    `originSessionId=${params.sessionId}`,
-    `targetSession=${params.sessionKey}`,
-    "[/Source Receipt]",
-  ].join("\n");
-}
-
 export class AcpTranslatorPromptStream {
   private readonly pendingPrompts = new Map<string, AcpPendingPrompt>();
   private readonly pendingPromptAdmissions = new Map<string, AcpPendingPromptAdmission>();
   private readonly settlingPromptKeys = new Set<string>();
   private readonly agentEvents: AcpTranslatorAgentEvents;
+  private readonly subagents: AcpTranslatorSubagents;
   private readonly disconnects: AcpTranslatorDisconnects;
   private stopped = false;
 
@@ -113,6 +92,7 @@ export class AcpTranslatorPromptStream {
     readonly approvalRelays: Map<string, AcpPendingApprovalRelay>,
     private readonly log: (msg: string) => void,
   ) {
+    this.subagents = new AcpTranslatorSubagents(gateway, sessionUpdates, log);
     this.agentEvents = new AcpTranslatorAgentEvents(
       connection,
       gateway,
@@ -122,6 +102,7 @@ export class AcpTranslatorPromptStream {
       (sessionId, runId) => this.getPendingPrompt(sessionId, runId),
       (sessionKey, runId) => this.findPendingBySessionKey(sessionKey, runId),
       log,
+      this.subagents,
     );
     this.disconnects = new AcpTranslatorDisconnects(
       gateway,
@@ -135,6 +116,7 @@ export class AcpTranslatorPromptStream {
 
   async shutdown(): Promise<void> {
     this.stopped = true;
+    await this.subagents.shutdown();
     this.disconnects.shutdown();
     const sessions = new Map<
       string,
@@ -166,7 +148,14 @@ export class AcpTranslatorPromptStream {
     this.disconnects.handleGatewayDisconnect(reason);
   }
 
+  async closeSubagents(sessionId: string): Promise<void> {
+    await this.subagents.closeSession(sessionId);
+  }
+
   async handleGatewayEvent(evt: EventFrame): Promise<void> {
+    if (await this.subagents.handleEvent(evt)) {
+      return;
+    }
     if (evt.event === "chat") {
       await this.handleChatEvent(evt);
       return;

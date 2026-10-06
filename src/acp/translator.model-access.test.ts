@@ -25,26 +25,32 @@ function setup(existing = true) {
     permissionMode: undefined as string | undefined,
   };
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-    if (method === "sessions.list")
+    if (method === "sessions.list") {
       return {
         defaults: { modelProvider: "google", model: "gemini-2.5-flash" },
         sessions: existing ? [row] : [],
       };
-    if (method === "models.list")
+    }
+    if (method === "models.list") {
       return {
         models: [
           { provider: "openai", id: "gpt-5.4", name: "GPT 5.4" },
           { provider: "google", id: "gemini-2.5-flash", name: "Gemini Flash" },
         ],
       };
-    if (method === "config.get") return { runtimeConfig: { tools: { exec: { mode: "auto" } } } };
+    }
+    if (method === "config.get") {
+      return { runtimeConfig: { tools: { exec: { mode: "auto" } } } };
+    }
     if (method === "sessions.patch") {
       if (typeof params?.model === "string") {
-        const [provider, ...model] = params.model.split("/");
+        const [provider = "", ...model] = params.model.split("/");
         row.modelProvider = provider;
         row.model = model.join("/");
       }
-      if (typeof params?.permissionMode === "string") row.permissionMode = params.permissionMode;
+      if (typeof params?.permissionMode === "string") {
+        row.permissionMode = params.permissionMode;
+      }
     }
     return { ok: true };
   });
@@ -110,7 +116,7 @@ describe("ACP model and access controls", () => {
       ["model", "google/gemini-2.5-flash", "model"],
       ["permission_mode", "guarded", "permissionMode"],
       ["permission_mode", "workspace", "permissionMode"],
-    ]) {
+    ] as const) {
       const result = await agent.setSessionConfigOption(
         createSetSessionConfigOptionRequest("agent:other:t3:test", id, value),
       );
@@ -121,7 +127,7 @@ describe("ACP model and access controls", () => {
       expect(result.configOptions).toContainEqual(
         expect.objectContaining({ id, currentValue: value }),
       );
-      expect(connection.__sessionUpdateMock).toHaveBeenCalledWith({
+      expect(connection["__sessionUpdateMock"]).toHaveBeenCalledWith({
         sessionId: "agent:other:t3:test",
         update: { sessionUpdate: "config_option_update", configOptions: result.configOptions },
       });
@@ -134,7 +140,7 @@ describe("ACP model and access controls", () => {
       ["permission_mode", "yolo"],
       ["model", "no-provider"],
       ["model", "/missing-provider"],
-    ]) {
+    ] as const) {
       await expect(
         agent.setSessionConfigOption(
           createSetSessionConfigOptionRequest("agent:other:t3:test", id, value),

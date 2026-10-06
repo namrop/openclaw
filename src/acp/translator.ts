@@ -180,7 +180,9 @@ export class AcpGatewayAgent implements Agent {
   }
 
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
-    return await this.sessionLifecycle.closeSession(params);
+    const result = await this.sessionLifecycle.closeSession(params);
+    await this.promptStream.closeSubagents(params.sessionId);
+    return result;
   }
 
   async authenticate(params: AuthenticateRequest): Promise<AuthenticateResponse> {
