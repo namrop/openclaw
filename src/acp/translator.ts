@@ -145,7 +145,7 @@ export class AcpGatewayAgent implements Agent {
         loadSession: true,
         promptCapabilities: {
           image: true,
-          audio: false,
+          audio: true,
           embeddedContext: true,
         },
         mcpCapabilities: {

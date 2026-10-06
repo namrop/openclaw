@@ -17,6 +17,7 @@ import { normalizeTerminalChatSendAckStatus } from "../shared/chat-send-ack-stat
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
 import { shortenHomePath } from "../utils.js";
 import { extractAttachmentsFromPrompt, extractTextFromPrompt } from "./event-mapper.js";
+import { createVoiceNoteTranscriptUpdate, transcribePromptAudio } from "./prompt-audio.js";
 import { parseSessionMeta } from "./session-mapper.js";
 import { AcpTranslatorAgentEvents } from "./translator.agent-events.js";
 import { AcpTranslatorDisconnects } from "./translator.disconnects.js";
@@ -221,8 +222,39 @@ export class AcpTranslatorPromptStream {
         // Closure traversal no longer needs a settled predecessor or its retained ancestors.
         admission.previous = undefined;
       }
+      let preparedParams = params;
+      if (params.prompt.some((block) => block.type === "audio")) {
+        const audio = await Promise.race([
+          transcribePromptAudio({
+            prompt: params.prompt,
+            sessionKey: session.sessionKey,
+            cwd: session.cwd,
+          }),
+          admission.closure.promise.then(() => undefined),
+        ]);
+        if (!audio || !this.ownsPromptAdmission(admission)) {
+          return { stopReason: "cancelled" };
+        }
+        preparedParams = { ...params, prompt: audio.prompt };
+        for (const transcript of audio.transcripts) {
+          if (!this.ownsPromptAdmission(admission)) {
+            return { stopReason: "cancelled" };
+          }
+          await this.sessionUpdates.emit({
+            sessionId: session.sessionId,
+            sessionKey: session.sessionKey,
+            ...(session.ledgerSessionId ? { ledgerSessionId: session.ledgerSessionId } : {}),
+            record: true,
+            update: createVoiceNoteTranscriptUpdate(transcript),
+          });
+        }
+        // Cancellation during transcript delivery must not submit a stale turn.
+        if (!this.ownsPromptAdmission(admission)) {
+          return { stopReason: "cancelled" };
+        }
+      }
       return await Promise.race([
-        this.submitPrompt(params, session),
+        this.submitPrompt(preparedParams, session),
         admission.closure.promise.then(() => ({ stopReason: "cancelled" as const })),
       ]);
     } finally {

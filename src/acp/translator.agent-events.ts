@@ -84,6 +84,7 @@ export class AcpTranslatorAgentEvents {
       const kind = inferToolKind(name);
       const locations = extractToolCallLocations(args);
       pending.toolCalls.set(toolCallId, {
+        name,
         title,
         kind,
         rawInput: args,
@@ -103,6 +104,7 @@ export class AcpTranslatorAgentEvents {
           rawInput: args,
           kind,
           locations,
+          _meta: { openclaw: { toolName: name } },
         },
       });
       return;
@@ -124,6 +126,7 @@ export class AcpTranslatorAgentEvents {
           rawOutput: partialResult,
           content: extractToolCallContent(partialResult),
           locations: extractToolCallLocations(toolState?.locations, partialResult),
+          _meta: { openclaw: { toolName: toolState?.name ?? name } },
         },
       });
       return;
@@ -146,6 +149,7 @@ export class AcpTranslatorAgentEvents {
           rawOutput: data.result,
           content: extractToolCallContent(data.result),
           locations: extractToolCallLocations(toolState?.locations, data.result),
+          _meta: { openclaw: { toolName: toolState?.name ?? name } },
         },
       });
     }

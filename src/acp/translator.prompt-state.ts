@@ -32,6 +32,7 @@ export type AcpPendingApprovalRelay = {
 };
 
 type AcpPendingToolCall = {
+  name?: string;
   kind: ToolKind;
   locations?: ToolCallLocation[];
   rawInput?: Record<string, unknown>;

@@ -52,7 +52,7 @@ describe("acp tool streaming bridge behavior", () => {
         sessionKey: "tool-session",
         phase: "update",
         toolCallId: "tool-1",
-        name: "read",
+        name: "wrong-update-name",
         partialResult: {
           content: [{ type: "text", text: "partial output" }],
           details: { path: "src/app.ts" },
@@ -64,7 +64,7 @@ describe("acp tool streaming bridge behavior", () => {
         sessionKey: "tool-session",
         phase: "result",
         toolCallId: "tool-1",
-        name: "read",
+        name: "wrong-result-name",
         result: {
           content: [{ type: "text", text: "FILE:src/app.ts" }],
           details: { path: "src/app.ts" },
@@ -84,6 +84,7 @@ describe("acp tool streaming bridge behavior", () => {
         rawInput: { path: "src/app.ts", line: 12 },
         kind: "read",
         locations: [{ path: "src/app.ts", line: 12 }],
+        _meta: { openclaw: { toolName: "read" } },
       },
     });
     expect(sessionUpdate).toHaveBeenCalledWith({
@@ -103,6 +104,7 @@ describe("acp tool streaming bridge behavior", () => {
           },
         ],
         locations: [{ path: "src/app.ts", line: 12 }],
+        _meta: { openclaw: { toolName: "read" } },
       },
     });
     expect(sessionUpdate).toHaveBeenCalledWith({
@@ -122,6 +124,7 @@ describe("acp tool streaming bridge behavior", () => {
           },
         ],
         locations: [{ path: "src/app.ts", line: 12 }],
+        _meta: { openclaw: { toolName: "read" } },
       },
     });
   });
