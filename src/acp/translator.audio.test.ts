@@ -23,6 +23,7 @@ vi.mock("../media-understanding/runtime.js", () => ({
 vi.mock("./commands.js", () => ({ getAvailableCommands: () => [] }));
 
 const key = "agent:main:t3:test-voice";
+const cfg = { tools: { media: { audio: { enabled: true } } } };
 const audio: ContentBlock = {
   type: "audio",
   data: Buffer.from("voice bytes").toString("base64"),
@@ -51,7 +52,7 @@ async function setup() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadConfig.mockReturnValue({ tools: { media: { audio: { enabled: true } } } });
+  mocks.loadConfig.mockReturnValue(cfg);
   mocks.saveMediaBuffer.mockResolvedValue({ path: "/tmp/inbound/voice.webm" });
   mocks.transcribeAudioFile.mockResolvedValue({ text: "Hello voice bridge." });
 });
@@ -104,7 +105,7 @@ describe("ACP voice notes", () => {
     expect(mocks.transcribeAudioFile).toHaveBeenCalledWith(
       expect.objectContaining({
         filePath: "/tmp/inbound/voice.webm",
-        cfg: mocks.loadConfig.mock.results[0].value,
+        cfg,
         agentDir: "/tmp/agent-main",
         workspaceDir: "/tmp",
         mime: "audio/webm",
@@ -129,9 +130,12 @@ describe("ACP voice notes", () => {
       ([notification]) => notification.update === echoes[0],
     );
     const sendIndex = request.mock.calls.findIndex(([method]) => method === "chat.send");
-    expect(connection["__sessionUpdateMock"].mock.invocationCallOrder[echoIndex]).toBeLessThan(
-      request.mock.invocationCallOrder[sendIndex],
-    );
+    const echoOrder = connection["__sessionUpdateMock"].mock.invocationCallOrder[echoIndex];
+    const sendOrder = request.mock.invocationCallOrder[sendIndex];
+    if (echoOrder === undefined || sendOrder === undefined) {
+      throw new Error("Expected transcript echo and chat.send invocation order");
+    }
+    expect(echoOrder).toBeLessThan(sendOrder);
     const replay = await ledger.readReplay({ sessionId, sessionKey: key });
     expect(replay.complete).toBe(true);
     expect(replay.events.map((event) => event.update)).toEqual(expect.arrayContaining(echoes));
