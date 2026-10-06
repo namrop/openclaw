@@ -135,7 +135,13 @@ export class AcpTranslatorSubagents {
       update: {
         sessionUpdate: "tool_call_update",
         toolCallId: child.toolCallId,
-        _meta: { openclaw: { toolName: "sessions_spawn", subagent: { ...meta } } },
+        _meta: {
+          openclaw: {
+            toolName: "sessions_spawn",
+            ...(meta.parentId ? { subagentId: meta.parentId } : {}),
+            subagent: { ...meta },
+          },
+        },
       },
     });
   }
@@ -362,7 +368,7 @@ export class AcpTranslatorSubagents {
             kind: "other",
             status: "in_progress",
             rawInput: data.args,
-            _meta: { openclaw: { toolName: "sessions_spawn" } },
+            _meta: { openclaw: { toolName: "sessions_spawn", subagentId: child.meta.id } },
           },
         });
       } else if (data.phase === "result") {
@@ -377,7 +383,11 @@ export class AcpTranslatorSubagents {
             status: data.isError ? "failed" : "completed",
             rawOutput: data.result,
             _meta: {
-              openclaw: { toolName: "sessions_spawn", ...(meta ? { subagent: meta } : {}) },
+              openclaw: {
+                toolName: "sessions_spawn",
+                subagentId: child.meta.id,
+                ...(meta ? { subagent: meta } : {}),
+              },
             },
           },
         });

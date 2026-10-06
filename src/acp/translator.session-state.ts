@@ -160,6 +160,10 @@ export class AcpTranslatorSessionState {
     }
     switch (configId) {
       case ACP_MODEL_CONFIG_ID:
+        // Clearing the override also restores the agent's configured fallback chain.
+        if (value === "default") {
+          return { patch: { model: null }, overrides: {} };
+        }
         if (!/^[^/\s]+\/\S+$/.test(value)) {
           throw new Error(`Unsupported model ref: ${value}`);
         }

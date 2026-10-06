@@ -224,10 +224,13 @@ export function buildSessionPresentation(params: {
       category: "model",
       name: "Model",
       currentValue: model,
-      options: (params.models ?? []).map((entry) => ({
-        value: `${entry.provider}/${entry.id}`,
-        name: entry.name ?? entry.id,
-      })),
+      options: [
+        { value: "default", name: "Default" },
+        ...(params.models ?? []).map((entry) => ({
+          value: `${entry.provider}/${entry.id}`,
+          name: entry.name ?? entry.id,
+        })),
+      ],
     });
   }
   if (row.permissionMode) {

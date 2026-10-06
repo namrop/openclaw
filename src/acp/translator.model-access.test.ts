@@ -43,6 +43,13 @@ function setup(existing = true) {
       return { runtimeConfig: { tools: { exec: { mode: "auto" } } } };
     }
     if (method === "sessions.patch") {
+      if (params?.model === "bogus/not-a-model") {
+        throw new Error("Unknown model");
+      }
+      if (params?.model === null) {
+        row.modelProvider = "google";
+        row.model = "gemini-2.5-flash";
+      }
       if (typeof params?.model === "string") {
         const [provider = "", ...model] = params.model.split("/");
         row.modelProvider = provider;
@@ -85,6 +92,7 @@ describe("ACP model and access controls", () => {
         name: "Model",
         currentValue: "openai/gpt-5.4",
         options: [
+          { value: "default", name: "Default" },
           { value: "openai/gpt-5.4", name: "GPT 5.4" },
           { value: "google/gemini-2.5-flash", name: "Gemini Flash" },
         ],
@@ -132,6 +140,43 @@ describe("ACP model and access controls", () => {
         update: { sessionUpdate: "config_option_update", configOptions: result.configOptions },
       });
     }
+  });
+  it("passes unlisted refs to the gateway and preserves the current model on rejection", async () => {
+    const { agent, request } = setup();
+    await agent.loadSession(createLoadSessionRequest("agent:other:t3:test"));
+    const result = await agent.setSessionConfigOption(
+      createSetSessionConfigOptionRequest("agent:other:t3:test", "model", "custom/private-model"),
+    );
+    expect(request).toHaveBeenCalledWith("sessions.patch", {
+      key: "agent:other:t3:test",
+      model: "custom/private-model",
+    });
+    expect(result.configOptions).toContainEqual(
+      expect.objectContaining({ id: "model", currentValue: "custom/private-model" }),
+    );
+    await expect(
+      agent.setSessionConfigOption(
+        createSetSessionConfigOptionRequest("agent:other:t3:test", "model", "bogus/not-a-model"),
+      ),
+    ).rejects.toThrow("Unknown model");
+    const loaded = await agent.loadSession(createLoadSessionRequest("agent:other:t3:test"));
+    expect(loaded.configOptions).toContainEqual(
+      expect.objectContaining({ id: "model", currentValue: "custom/private-model" }),
+    );
+  });
+  it("clears a model override when Default is selected, restoring the configured agent default", async () => {
+    const { agent, request } = setup();
+    await agent.loadSession(createLoadSessionRequest("agent:other:t3:test"));
+    const result = await agent.setSessionConfigOption(
+      createSetSessionConfigOptionRequest("agent:other:t3:test", "model", "default"),
+    );
+    expect(request).toHaveBeenCalledWith("sessions.patch", {
+      key: "agent:other:t3:test",
+      model: null,
+    });
+    expect(result.configOptions).toContainEqual(
+      expect.objectContaining({ id: "model", currentValue: "google/gemini-2.5-flash" }),
+    );
   });
   it("rejects invalid permission modes and malformed model refs before patching", async () => {
     const { agent, request } = setup();

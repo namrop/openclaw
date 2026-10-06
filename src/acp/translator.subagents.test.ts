@@ -352,9 +352,19 @@ describe("ACP child lifecycle", () => {
         event: "started",
       }),
     );
-    expect(
-      s.connection["__sessionUpdateMock"].mock.calls.every(([call]) => call.sessionId === "parent"),
-    ).toBe(true);
+    const calls = s.connection["__sessionUpdateMock"].mock.calls.map(([call]) => call);
+    const nested = calls.filter(
+      (call) => "toolCallId" in call.update && call.update.toolCallId === "spawn-2",
+    );
+    expect(nested).toHaveLength(2);
+    for (const call of nested) {
+      expect(call.update._meta?.openclaw).toMatchObject({ subagentId: "child" });
+    }
+    const rootStart = calls.find(
+      (call) => call.update.sessionUpdate === "tool_call" && call.update.toolCallId === "spawn-1",
+    );
+    expect(rootStart?.update._meta?.openclaw).not.toHaveProperty("subagentId");
+    expect(calls.every((call) => call.sessionId === "parent")).toBe(true);
     await s.agent.handleGatewayEvent(createChatFinalEvent("parent"));
     await s.prompt;
     await s.agent.shutdown();
