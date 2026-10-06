@@ -116,7 +116,9 @@ export class AcpTranslatorSubagents {
     const child = this.children.get(id);
     if (child && this.active(child) && !child.observing) {
       child.observing = true;
-      void this.monitor(child).catch((err) => this.log(`child observation failed: ${String(err)}`));
+      void this.monitor(child).catch((err: unknown) =>
+        this.log(`child observation failed: ${String(err)}`),
+      );
     }
   }
   private active(child: Child): boolean {
@@ -246,7 +248,9 @@ export class AcpTranslatorSubagents {
     if (this.active(child)) {
       child.timer = setTimeout(() => {
         child.timer = undefined;
-        void this.wait(child).catch((err) => this.log(`child wait cleanup failed: ${String(err)}`));
+        void this.wait(child).catch((err: unknown) =>
+          this.log(`child wait cleanup failed: ${String(err)}`),
+        );
       }, retryMs);
       child.timer.unref();
     }
@@ -290,7 +294,7 @@ export class AcpTranslatorSubagents {
               { key: child.meta.id, clearQueued: true },
               { timeoutMs: CLEANUP_TIMEOUT_MS },
             )
-            .catch((err) => {
+            .catch((err: unknown) => {
               this.log(`child abort failed: ${String(err)}`);
               terminalSummary =
                 "Child observation stopped; the gateway could not confirm cancellation.";
@@ -323,7 +327,7 @@ export class AcpTranslatorSubagents {
       if (!child.progressTimer) {
         child.progressTimer = setTimeout(() => {
           child.progressTimer = undefined;
-          void this.progress(child).catch((err) =>
+          void this.progress(child).catch((err: unknown) =>
             this.log(`child progress failed: ${String(err)}`),
           );
         }, delay);
@@ -399,7 +403,7 @@ export class AcpTranslatorSubagents {
             { key: child.meta.id, limit: 50 },
             { timeoutMs: CLEANUP_TIMEOUT_MS },
           )
-          .catch((err) => {
+          .catch((err: unknown) => {
             this.log(`child spawn receipt unavailable: ${String(err)}`);
             return { messages: [] };
           });
