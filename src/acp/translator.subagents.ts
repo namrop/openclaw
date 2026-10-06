@@ -36,6 +36,8 @@ type Child = {
   finishing?: Promise<void>;
   waitErrorSince?: number;
   waitErrors: number;
+  spawnStarts: Set<string>;
+  spawnEnds: Set<string>;
 };
 type Spawn = { route: Route; args?: Record<string, unknown>; parentId: string | null };
 
@@ -105,6 +107,8 @@ export class AcpTranslatorSubagents {
       meta,
       runId: typeof details.runId === "string" ? details.runId : undefined,
       waitErrors: 0,
+      spawnStarts: new Set(),
+      spawnEnds: new Set(),
     });
     return meta;
   }
@@ -342,6 +346,107 @@ export class AcpTranslatorSubagents {
       return false;
     }
     const data = asOptionalRecord(payload?.data);
+    // Child subscriptions can expose only sparse item frames. The stored
+    // assistant message supplies arguments; the exact tool receipt supplies
+    // the accepted child key (never infer it from text or childSessions).
+    const message = asOptionalRecord(payload?.message);
+    if (
+      evt.event === "session.message" &&
+      message?.role === "assistant" &&
+      Array.isArray(message.content)
+    ) {
+      for (const rawPart of message.content) {
+        const part = asOptionalRecord(rawPart);
+        if (
+          part?.type === "toolCall" &&
+          part.name === "sessions_spawn" &&
+          typeof part.id === "string"
+        ) {
+          await this.handleEvent({
+            ...evt,
+            event: "agent",
+            payload: {
+              sessionKey: child.meta.id,
+              stream: "tool",
+              data: {
+                phase: "start",
+                name: "sessions_spawn",
+                toolCallId: part.id,
+                args: part.arguments,
+              },
+            },
+          });
+        }
+      }
+    }
+    if (
+      evt.event === "agent" &&
+      payload?.stream === "item" &&
+      data?.kind === "tool" &&
+      data.name === "sessions_spawn" &&
+      typeof data.toolCallId === "string"
+    ) {
+      const toolCallId = data.toolCallId;
+      if (data.phase === "start") {
+        await this.handleEvent({
+          ...evt,
+          payload: { sessionKey: child.meta.id, stream: "tool", data: { ...data, phase: "start" } },
+        });
+      } else if (data.phase === "end" && !child.spawnEnds.has(toolCallId)) {
+        const history = await this.gateway
+          .request<{ messages?: unknown[] }>(
+            "sessions.get",
+            { key: child.meta.id, limit: 50 },
+            { timeoutMs: CLEANUP_TIMEOUT_MS },
+          )
+          .catch((err) => {
+            this.log(`child spawn receipt unavailable: ${String(err)}`);
+            return { messages: [] };
+          });
+        if (!this.active(child)) {
+          return true;
+        }
+        const messages = (history.messages ?? []).map(asOptionalRecord);
+        const receipt = messages.findLast(
+          (row) =>
+            row?.role === "toolResult" &&
+            row.toolCallId === toolCallId &&
+            row.toolName === "sessions_spawn",
+        );
+        if (receipt) {
+          for (const row of messages) {
+            if (row?.role === "assistant" && Array.isArray(row.content)) {
+              const call = row.content
+                .map(asOptionalRecord)
+                .find((part) => part?.type === "toolCall" && part.id === toolCallId);
+              if (call) {
+                this.rememberSpawn(
+                  child.meta.id,
+                  toolCallId,
+                  child.route,
+                  asOptionalRecord(call.arguments),
+                  child.meta.id,
+                );
+              }
+            }
+          }
+          await this.handleEvent({
+            ...evt,
+            payload: {
+              sessionKey: child.meta.id,
+              stream: "tool",
+              data: {
+                name: "sessions_spawn",
+                toolCallId,
+                phase: "result",
+                isError: receipt.isError,
+                result: receipt,
+              },
+            },
+          });
+        }
+      }
+    }
     if (
       (evt.event === "agent" || evt.event === "session.tool") &&
       payload?.stream === "tool" &&
@@ -349,7 +454,8 @@ export class AcpTranslatorSubagents {
       typeof data.toolCallId === "string"
     ) {
       const toolCallId = data.toolCallId;
-      if (data.phase === "start") {
+      if (data.phase === "start" && !child.spawnStarts.has(toolCallId)) {
+        child.spawnStarts.add(toolCallId);
         this.rememberSpawn(
           child.meta.id,
           toolCallId,
@@ -371,7 +477,8 @@ export class AcpTranslatorSubagents {
             _meta: { openclaw: { toolName: "sessions_spawn", subagentId: child.meta.id } },
           },
         });
-      } else if (data.phase === "result") {
+      } else if (data.phase === "result" && !child.spawnEnds.has(toolCallId)) {
+        child.spawnEnds.add(toolCallId);
         const meta = this.acceptSpawn(child.meta.id, toolCallId, data.result);
         await this.updates.emit({
           ...child.route,

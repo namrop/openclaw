@@ -62,6 +62,88 @@ function observer(
 }
 
 describe("ACP sparse child observations", () => {
+  it("recovers a nested spawn from sparse child item events without duplicate rows", async () => {
+    const args = { task: "Grandchild task", model: "kimi/k3" };
+    const request = vi.fn(async (method: string) =>
+      method === "sessions.get"
+        ? {
+            messages: [
+              {
+                role: "assistant",
+                content: [
+                  { type: "toolCall", id: "nested", name: "sessions_spawn", arguments: args },
+                ],
+              },
+              {
+                role: "toolResult",
+                toolCallId: "nested",
+                toolName: "sessions_spawn",
+                details: {
+                  status: "accepted",
+                  childSessionKey: "grandchild",
+                  resolvedModel: "kimi/k3",
+                },
+              },
+            ],
+          }
+        : { ok: true },
+    );
+    const s = observer(request);
+    await s.children.handleEvent({
+      event: "session.message",
+      payload: {
+        sessionKey: "child",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "nested", name: "sessions_spawn", arguments: args }],
+        },
+      },
+    } as EventFrame);
+    await s.event("item", {
+      kind: "tool",
+      name: "sessions_spawn",
+      toolCallId: "nested",
+      phase: "start",
+    });
+    await s.event("item", {
+      kind: "tool",
+      name: "sessions_spawn",
+      toolCallId: "nested",
+      phase: "end",
+      status: "completed",
+    });
+    await s.event("item", {
+      kind: "tool",
+      name: "sessions_spawn",
+      toolCallId: "nested",
+      phase: "end",
+      status: "completed",
+    });
+    const nested = s.emit.mock.calls
+      .map(([call]) => call.update)
+      .filter(
+        (u) =>
+          (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") &&
+          u.toolCallId === "nested",
+      );
+    expect(nested.filter((u) => u.sessionUpdate === "tool_call")).toHaveLength(1);
+    expect(nested).toContainEqual(
+      expect.objectContaining({
+        _meta: {
+          openclaw: {
+            toolName: "sessions_spawn",
+            subagentId: "child",
+            subagent: expect.objectContaining({
+              id: "grandchild",
+              parentId: "child",
+              goal: "Grandchild task",
+            }),
+          },
+        },
+      }),
+    );
+    await s.children.shutdown();
+  });
   it("revokes new child admission before awaiting shutdown cleanup", async () => {
     let release!: () => void;
     const request = vi.fn(async (method: string) => {
