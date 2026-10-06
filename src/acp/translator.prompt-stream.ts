@@ -1,11 +1,12 @@
 /** ACP prompt submission, Gateway chat streaming, and prompt settlement. */
 import { randomUUID } from "node:crypto";
-import type {
-  AgentSideConnection,
-  CancelNotification,
-  PromptRequest,
-  PromptResponse,
-  StopReason,
+import {
+  RequestError,
+  type AgentSideConnection,
+  type CancelNotification,
+  type PromptRequest,
+  type PromptResponse,
+  type StopReason,
 } from "@agentclientprotocol/sdk";
 import { readBool, readMetadataString, readNonNegativeInteger } from "@openclaw/acp-core/meta";
 import type { AcpSessionStore } from "@openclaw/acp-core/session";
@@ -546,9 +547,17 @@ export class AcpTranslatorPromptStream {
       return;
     }
     if (state === "error") {
-      const errorKind = payload.errorKind as string | undefined;
-      const stopReason: StopReason = errorKind === "refusal" ? "refusal" : "end_turn";
-      void this.finishPrompt(pending.sessionId, pending, stopReason);
+      if (payload.errorKind === "refusal") {
+        await this.finishPrompt(pending.sessionId, pending, "refusal");
+        return;
+      }
+      // ACP has no failure stop reason. Reject with a RequestError so the SDK
+      // preserves the Gateway message in the JSON-RPC error, not just its data.
+      const message =
+        typeof payload.errorMessage === "string" && payload.errorMessage.trim()
+          ? payload.errorMessage
+          : "OpenClaw agent run failed.";
+      await this.rejectPendingPrompt(pending, new RequestError(-32603, message));
     }
   }
 

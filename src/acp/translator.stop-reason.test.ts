@@ -102,8 +102,9 @@ async function createDisconnectNoticeHarness(params: { sendAccepted: boolean }) 
 }
 
 describe("acp translator stop reason mapping", () => {
-  it("error state resolves as end_turn, not refusal", async () => {
+  it("error state rejects the prompt with the gateway message", async () => {
     const { agent, promptPromise, runId } = await createPendingPromptHarness();
+    void promptPromise.catch(() => {});
 
     await agent.handleGatewayEvent(
       createChatEvent({
@@ -115,11 +116,12 @@ describe("acp translator stop reason mapping", () => {
       }),
     );
 
-    await expect(promptPromise).resolves.toEqual({ stopReason: "end_turn" });
+    await expect(promptPromise).rejects.toThrow("gateway timeout");
   });
 
-  it("error state with no errorMessage resolves as end_turn", async () => {
+  it("error state with no errorMessage rejects with a useful default", async () => {
     const { agent, promptPromise, runId } = await createPendingPromptHarness();
+    void promptPromise.catch(() => {});
 
     await agent.handleGatewayEvent(
       createChatEvent({
@@ -130,7 +132,7 @@ describe("acp translator stop reason mapping", () => {
       }),
     );
 
-    await expect(promptPromise).resolves.toEqual({ stopReason: "end_turn" });
+    await expect(promptPromise).rejects.toThrow("OpenClaw agent run failed.");
   });
 
   it("aborted state resolves as cancelled", async () => {
