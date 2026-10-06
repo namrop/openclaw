@@ -441,9 +441,10 @@ export class AcpTranslatorPromptStream {
 
     const pending = this.pendingPrompts.get(session.sessionId);
     const scopedRunId = session.activeRunId ?? pending?.idempotencyKey;
+    const stoppingChildren = this.subagents.closeSession(session.sessionId);
 
     if (!scopedRunId) {
-      await Promise.all(closingAdmissions);
+      await Promise.all([...closingAdmissions, stoppingChildren]);
       return;
     }
 
@@ -463,7 +464,7 @@ export class AcpTranslatorPromptStream {
     } catch (err) {
       this.log(`cancel error: ${String(err)}`);
     }
-    await Promise.all(closingAdmissions);
+    await Promise.all([...closingAdmissions, stoppingChildren]);
   }
 
   private ownsPromptAdmission(admission: AcpPendingPromptAdmission): boolean {

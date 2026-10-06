@@ -14,6 +14,7 @@ export type AcpSubagentMeta = {
   model: string | null;
   status?: "completed" | "failed" | "stopped";
   summary?: string;
+  activity?: string;
 };
 type Route = {
   sessionId: string;
@@ -27,13 +28,26 @@ type Child = {
   runId?: string;
   meta: AcpSubagentMeta;
   timer?: ReturnType<typeof setTimeout>;
+  progressTimer?: ReturnType<typeof setTimeout>;
+  lastProgressAt?: number;
+  lastTool?: string;
+  lifecyclePhase?: string;
+  observing?: boolean;
+  finishing?: Promise<void>;
+  waitErrorSince?: number;
+  waitErrors: number;
 };
 type Spawn = { route: Route; args?: Record<string, unknown>; parentId: string | null };
+
+const PROGRESS_INTERVAL_MS = 1_000;
+const WAIT_ERROR_BUDGET_MS = 180_000;
+const CLEANUP_TIMEOUT_MS = 5_000;
 
 export class AcpTranslatorSubagents {
   private readonly children = new Map<string, Child>();
   private readonly spawns = new Map<string, Spawn>();
   private stopped = false;
+  private draining = false;
   constructor(
     private readonly gateway: GatewayClient,
     private readonly updates: AcpTranslatorSessionUpdates,
@@ -47,7 +61,9 @@ export class AcpTranslatorSubagents {
     args?: Record<string, unknown>,
     parentId: string | null = null,
   ): void {
-    this.spawns.set(`${sessionKey}\0${toolCallId}`, { route, args, parentId });
+    if (!this.stopped && !this.draining) {
+      this.spawns.set(`${sessionKey}\0${toolCallId}`, { route, args, parentId });
+    }
   }
   acceptSpawn(
     sessionKey: string,
@@ -59,7 +75,13 @@ export class AcpTranslatorSubagents {
     this.spawns.delete(key);
     const raw = asOptionalRecord(result);
     const details = asOptionalRecord(raw?.details) ?? raw;
-    if (!spawn || details?.status !== "accepted" || typeof details.childSessionKey !== "string") {
+    if (
+      this.stopped ||
+      this.draining ||
+      !spawn ||
+      details?.status !== "accepted" ||
+      typeof details.childSessionKey !== "string"
+    ) {
       return undefined;
     }
     const id = details.childSessionKey;
@@ -82,26 +104,34 @@ export class AcpTranslatorSubagents {
       toolCallId,
       meta,
       runId: typeof details.runId === "string" ? details.runId : undefined,
+      waitErrors: 0,
     });
     return meta;
   }
   observe(id: string): void {
     const child = this.children.get(id);
-    if (child) {
+    if (child && this.active(child) && !child.observing) {
+      child.observing = true;
       void this.monitor(child).catch((err) => this.log(`child observation failed: ${String(err)}`));
     }
   }
   private active(child: Child): boolean {
-    return !this.stopped && this.children.get(child.meta.id) === child;
+    return (
+      !this.stopped &&
+      !this.draining &&
+      !child.finishing &&
+      this.children.get(child.meta.id) === child
+    );
   }
   private async emit(child: Child, meta: AcpSubagentMeta): Promise<void> {
-    if (!this.active(child)) {
+    if (this.stopped || this.children.get(child.meta.id) !== child) {
       return;
     }
     await this.updates.emit({
       ...child.route,
       runId: child.route.idempotencyKey,
       record: true,
+      waitForDelivery: false,
       update: {
         sessionUpdate: "tool_call_update",
         toolCallId: child.toolCallId,
@@ -111,7 +141,11 @@ export class AcpTranslatorSubagents {
   }
   private async monitor(child: Child): Promise<void> {
     try {
-      await this.gateway.request("sessions.messages.subscribe", { key: child.meta.id });
+      await this.gateway.request(
+        "sessions.messages.subscribe",
+        { key: child.meta.id },
+        { timeoutMs: CLEANUP_TIMEOUT_MS },
+      );
     } catch (err) {
       this.log(`child live subscription unavailable: ${String(err)}`);
     }
@@ -127,6 +161,19 @@ export class AcpTranslatorSubagents {
     if (!this.active(child)) {
       return;
     }
+    if (
+      child.waitErrorSince !== undefined &&
+      Date.now() - child.waitErrorSince >= WAIT_ERROR_BUDGET_MS
+    ) {
+      await this.finish(
+        child,
+        "failed",
+        "The bridge lost track of this child after repeated gateway wait errors.",
+      );
+      return;
+    }
+    const waitStartedAt = Date.now();
+    let retryMs = 1_000;
     try {
       const result = await this.gateway.request<{
         status?: string;
@@ -139,6 +186,8 @@ export class AcpTranslatorSubagents {
       if (!this.active(child)) {
         return;
       }
+      child.waitErrorSince = undefined;
+      child.waitErrors = 0;
       // A polling timeout, queued/yielded run or provisional retry error is not a child end.
       if (
         !result.pendingError &&
@@ -151,7 +200,11 @@ export class AcpTranslatorSubagents {
           result.terminalReply?.disposition === "visible" ? (result.terminalReply.text ?? "") : "";
         if (!result.terminalReply) {
           const history = await this.gateway
-            .request<{ messages?: unknown[] }>("sessions.get", { key: child.meta.id, limit: 50 })
+            .request<{ messages?: unknown[] }>(
+              "sessions.get",
+              { key: child.meta.id, limit: 50 },
+              { timeoutMs: CLEANUP_TIMEOUT_MS },
+            )
             .catch(() => ({ messages: [] }));
           for (const message of (history.messages ?? []).toReversed()) {
             const text = extractStoredAssistantText(message);
@@ -167,30 +220,113 @@ export class AcpTranslatorSubagents {
             : ["rpc", "aborted", "killed", "restart", "stop"].includes(result.stopReason ?? "")
               ? "stopped"
               : "failed";
-        await this.emit(child, {
-          ...child.meta,
-          event: "completed",
-          status,
-          summary: truncateUtf16Safe(summary, 20_000),
-        });
-        this.children.delete(child.meta.id);
-        await this.unsubscribe(child);
+        await this.finish(child, status, summary);
         return;
       }
     } catch (err) {
       this.log(`child wait unavailable (not a child failure): ${String(err)}`);
+      child.waitErrorSince ??= waitStartedAt;
+      child.waitErrors += 1;
+      retryMs = Math.min(
+        30_000,
+        1_000 * 2 ** Math.min(child.waitErrors - 1, 5),
+        Math.max(0, WAIT_ERROR_BUDGET_MS - (Date.now() - child.waitErrorSince)),
+      );
     }
     if (this.active(child)) {
       child.timer = setTimeout(() => {
-        void this.wait(child);
-      }, 1_000);
+        child.timer = undefined;
+        void this.wait(child).catch((err) => this.log(`child wait cleanup failed: ${String(err)}`));
+      }, retryMs);
       child.timer.unref();
     }
   }
   private async unsubscribe(child: Child): Promise<void> {
     await this.gateway
-      .request("sessions.messages.unsubscribe", { key: child.meta.id })
+      .request(
+        "sessions.messages.unsubscribe",
+        { key: child.meta.id },
+        { timeoutMs: CLEANUP_TIMEOUT_MS },
+      )
       .catch(() => {});
+  }
+  private finish(
+    child: Child,
+    status: NonNullable<AcpSubagentMeta["status"]>,
+    summary: string,
+    abort = false,
+  ): Promise<void> {
+    if (child.finishing) {
+      return child.finishing;
+    }
+    if (this.stopped || this.children.get(child.meta.id) !== child) {
+      return Promise.resolve();
+    }
+    // Claim before any await: cancel, wait, and shutdown race, but only one owns the end.
+    // Defer the body one microtask so the claim is installed before calling external code.
+    child.finishing = Promise.resolve().then(async () => {
+      let terminalSummary = summary;
+      if (child.timer) {
+        clearTimeout(child.timer);
+      }
+      if (child.progressTimer) {
+        clearTimeout(child.progressTimer);
+      }
+      try {
+        if (abort) {
+          await this.gateway
+            .request(
+              "sessions.abort",
+              { key: child.meta.id, clearQueued: true },
+              { timeoutMs: CLEANUP_TIMEOUT_MS },
+            )
+            .catch((err) => {
+              this.log(`child abort failed: ${String(err)}`);
+              terminalSummary =
+                "Child observation stopped; the gateway could not confirm cancellation.";
+            });
+        }
+        await this.emit(child, {
+          ...child.meta,
+          event: "completed",
+          status,
+          summary: truncateUtf16Safe(terminalSummary, 20_000),
+        });
+      } catch (err) {
+        this.log(`child terminal delivery failed: ${String(err)}`);
+      } finally {
+        this.children.delete(child.meta.id);
+        await this.unsubscribe(child);
+      }
+    });
+    return child.finishing;
+  }
+  private async progress(child: Child): Promise<void> {
+    if (!this.active(child)) {
+      return;
+    }
+    const delay =
+      child.lastProgressAt === undefined
+        ? 0
+        : Math.max(0, PROGRESS_INTERVAL_MS - (Date.now() - child.lastProgressAt));
+    if (delay > 0) {
+      if (!child.progressTimer) {
+        child.progressTimer = setTimeout(() => {
+          child.progressTimer = undefined;
+          void this.progress(child).catch((err) =>
+            this.log(`child progress failed: ${String(err)}`),
+          );
+        }, delay);
+        child.progressTimer.unref();
+      }
+      return;
+    }
+    if (child.progressTimer) {
+      clearTimeout(child.progressTimer);
+    }
+    child.progressTimer = undefined;
+    child.lastProgressAt = Date.now();
+    await this.emit(child, { ...child.meta, event: "progress" });
   }
   async handleEvent(evt: EventFrame): Promise<boolean> {
     const payload = asOptionalRecord(evt.payload);
@@ -250,14 +386,43 @@ export class AcpTranslatorSubagents {
         }
       }
     }
-    if (
-      evt.event === "agent" ||
-      evt.event === "chat" ||
-      evt.event === "session.tool" ||
-      evt.event === "session.message"
-    ) {
-      // Progress is observed activity, not an inferred completion. agent.wait owns the terminal fact.
-      await this.emit(child, { ...child.meta, event: "progress" });
+    // Text deltas/snapshots are not progress facts. Live and recorded changes share the throttle.
+    let changed = false;
+    if (evt.event === "agent" || evt.event === "session.tool") {
+      if (typeof data?.model === "string") {
+        const model = data.model.includes("/")
+          ? data.model
+          : typeof data.provider === "string"
+            ? `${data.provider}/${data.model}`
+            : null;
+        if (model && model !== child.meta.model) {
+          child.meta.model = model;
+          changed = true;
+        }
+      }
+      if (
+        payload?.stream === "tool" &&
+        (data?.phase === "start" || data?.phase === "result") &&
+        typeof data.toolCallId === "string"
+      ) {
+        const signature = `${data.toolCallId}\0${data.phase}`;
+        if (signature !== child.lastTool) {
+          child.lastTool = signature;
+          child.meta.activity = `${typeof data.name === "string" ? data.name : "Tool"} ${data.phase === "start" ? "started" : "finished"}`;
+          changed = true;
+        }
+      } else if (
+        payload?.stream === "lifecycle" &&
+        typeof data?.phase === "string" &&
+        data.phase !== child.lifecyclePhase
+      ) {
+        child.lifecyclePhase = data.phase;
+        child.meta.activity = data.phase;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.progress(child);
     }
     return true;
   }
@@ -270,22 +435,17 @@ export class AcpTranslatorSubagents {
     await Promise.all(
       [...this.children.values()]
         .filter((child) => child.route.sessionId === sessionId)
-        .map(async (child) => {
-          this.children.delete(child.meta.id);
-          if (child.timer) {
-            clearTimeout(child.timer);
-          }
-          await this.unsubscribe(child);
-        }),
+        .map((child) => this.finish(child, "stopped", "Child stopped by the ACP client.", true)),
     );
   }
   async shutdown(): Promise<void> {
-    this.stopped = true;
+    this.draining = true;
     await Promise.all(
       [...new Set([...this.children.values()].map((child) => child.route.sessionId))].map((id) =>
         this.closeSession(id),
       ),
     );
+    this.stopped = true;
     this.spawns.clear();
   }
 }
